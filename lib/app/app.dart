@@ -8,7 +8,7 @@ class MyApp extends StatelessWidget {
     return const MaterialApp(
       debugShowCheckedModeBanner: false,
       home: Scaffold(
-        body: Center(child: Text('Estructura base funcionando 🚀')),
+        body: Center(child: Text('Estructura base funcionando... ')),
       ),
     );
   }
