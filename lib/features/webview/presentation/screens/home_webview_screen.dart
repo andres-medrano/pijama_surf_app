@@ -19,8 +19,7 @@ class WebviewScreen extends StatefulWidget {
 
 class _WebviewScreen extends State<WebviewScreen> {
   late final WebViewController _controller;
-  bool isLoading =
-      false; //esta variable indica si la página web está cargando o no.
+  bool isLoading = false; //esta variable indica si la página web está cargando o no.
 
   @override
   void initState() {
@@ -46,27 +45,51 @@ class _WebviewScreen extends State<WebviewScreen> {
               onWebResourceError: (error) {
                 print("Error al cargar la página: ${error.description}");
               },
+              // Forzar https cuando el enlace venga en http (solo dominios permitidos)
+              onNavigationRequest: (request) {
+                final uri = Uri.parse(request.url);
+                final host = uri.host.toLowerCase();
+                final isHttp = uri.scheme == 'http';
+
+                final isAllowedHost =
+                    allowedHosts.contains(host) ||
+                    host.endsWith('.pijamasurf.com');
+
+                if (isHttp && isAllowedHost) {
+                  final httpsUri = uri.replace(scheme: 'https');
+                  _controller.loadRequest(httpsUri); // cargar versión segura
+                  return NavigationDecision.prevent; // bloquear la http original
+                }
+
+                return NavigationDecision.navigate; // permitir lo demás
+              },
             ),
-          )
-          ..loadRequest(
-            Uri.parse(baseUrl),
-          ); // le dice a webviewcontroller que carge una pagina por medio de http requests
+          )..loadRequest(Uri.parse(baseUrl)); // carga la pagina principal de pijama surf en el webview
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text('Pijama Surf'), actions: [
-        ],
-      ),
+      appBar: AppBar(title: Text('Pijama Surf'), 
+      actions: [
+        IconButton(
+          onPressed: () {
+            _controller.reload();
+          } , 
+          icon: 
+          Icon(
+            Icons.refresh,
+          ),
+          tooltip: 'Regargar',
+        )
+      ],
+    ),
       body: SafeArea(
         child: Stack(
           children: [
             WebViewWidget(controller: _controller),
             if (isLoading) //segunda capa del stack, se viasualiza encima del webviewwidget, condicional para mostrae el circularprogressindicator, dependiendo si la pagina esta o no cargando
-              Center(
-                child: CircularProgressIndicator(),
-              ),
+              Center(child: CircularProgressIndicator()),
           ],
         ),
       ),
