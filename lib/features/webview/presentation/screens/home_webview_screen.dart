@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:pijama_surf_app/core/utils/constants.dart';
+import 'package:pijama_surf_app/core/services/external_link_service.dart';
+import 'package:pijama_surf_app/features/webview/presentation/widgets/external_link_dialog.dart';
 
 //Única pantalla del MVP.
 
@@ -43,10 +45,10 @@ class _WebviewScreen extends State<WebviewScreen> {
                 });
               },
               onWebResourceError: (error) {
-                print("Error al cargar la página: ${error.description}");
+                debugPrint("Error al cargar la página: ${error.description}");
               },
               // Forzar https cuando el enlace venga en http (solo dominios permitidos)
-              onNavigationRequest: (request) {
+              onNavigationRequest: (request) async {
                 final uri = Uri.parse(request.url);
                 final host = uri.host.toLowerCase();
                 final isHttp = uri.scheme == 'http';
@@ -60,8 +62,22 @@ class _WebviewScreen extends State<WebviewScreen> {
                   _controller.loadRequest(httpsUri); // cargar versión segura
                   return NavigationDecision.prevent; // bloquear la http original
                 }
+                else if(allowedHosts.contains(host)) { //verifica si la url a abrir es interna y la abre
+                  return NavigationDecision.navigate;
+                } else {
+                //en caso de que la url sea externa, se hace un llamado a la funcion externallinkservice para abrir enlace externo
+                
+                final confirm = await showExternalLinkDialog(context, uri); // instancia de la funcion showexternallinkdialog
 
-                return NavigationDecision.navigate; // permitir lo demás
+                if (confirm) { 
+                  final externalLinkService = ExternalLinkService();
+                  await externalLinkService.openExternalLink(uri);
+                  debugPrint('Enlace externo: $uri');
+                }
+                
+                return NavigationDecision.prevent;
+                }
+                
               },
             ),
           )..loadRequest(Uri.parse(baseUrl)); // carga la pagina principal de pijama surf en el webview
@@ -70,17 +86,17 @@ class _WebviewScreen extends State<WebviewScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text('Pijama Surf'), 
+      appBar: AppBar(title: const Text('Pijama Surf'), 
       actions: [
         IconButton(
           onPressed: () {
             _controller.reload();
           } , 
           icon: 
-          Icon(
+          const Icon(
             Icons.refresh,
           ),
-          tooltip: 'Regargar',
+          tooltip: 'Recargar',
         )
       ],
     ),
