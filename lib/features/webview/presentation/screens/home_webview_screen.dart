@@ -22,6 +22,9 @@ class WebviewScreen extends StatefulWidget {
 class _WebviewScreen extends State<WebviewScreen> {
   late final WebViewController _controller;
   bool isLoading = false; //esta variable indica si la página web está cargando o no.
+  int _progress = 0; //contador para barra de progreso
+  String? _errorMessage;
+
 
   @override
   void initState() {
@@ -36,6 +39,7 @@ class _WebviewScreen extends State<WebviewScreen> {
             NavigationDelegate(
               onPageStarted: (url) {
                 setState(() {
+                  _errorMessage = null;
                   isLoading = true;
                 });
               },
@@ -44,7 +48,17 @@ class _WebviewScreen extends State<WebviewScreen> {
                   isLoading = false;
                 });
               },
+              onProgress: (value) {
+                setState(() {
+                  _progress = value;
+                });
+              },
               onWebResourceError: (error) {
+                setState(() {
+                  _progress = 0;
+                  isLoading = false;
+                  _errorMessage = error.description; //se guarda en la variable errormessage el mensaje del error en cuestion
+                });
                 debugPrint("Error al cargar la página: ${error.description}");
               },
               // Forzar https cuando el enlace venga en http (solo dominios permitidos)
@@ -103,9 +117,51 @@ class _WebviewScreen extends State<WebviewScreen> {
       body: SafeArea(
         child: Stack(
           children: [
+            
             WebViewWidget(controller: _controller),
+
+
+            if(_errorMessage != null) // mostrar mensaje de error en caso de problema con conexion
+              Center(
+                child: Column(
+                  mainAxisAlignment:  MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.wifi_off, size: 48, color: Color.fromARGB(255, 6, 4, 4),),
+                    const SizedBox(height: 12),
+                    Text(
+                      'No se pudo cargar la pagina.\n${_errorMessage!}',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: const Color.fromARGB(255, 6, 4, 4)),
+                      ),
+                    const SizedBox(height: 16),
+                    ElevatedButton(
+                      onPressed: () {
+                        setState(() {
+                          _errorMessage = null;
+                          _controller.reload();
+                        });
+                      }, 
+                      child: const Text('Reintentar'),
+                      ),
+                  ]
+                  
+                ),
+              ),
+
             if (isLoading) //segunda capa del stack, se viasualiza encima del webviewwidget, condicional para mostrae el circularprogressindicator, dependiendo si la pagina esta o no cargando
-              Center(child: CircularProgressIndicator()),
+              Container(
+                color: Colors.black26,
+                alignment: Alignment.center,
+                child: Center(child: CircularProgressIndicator(),
+                ),
+              ),
+
+            if(_progress > 0  &&  _progress < 100) // barra de progreso al cargar una pagina internamente
+               Align(
+                alignment: Alignment.topCenter,
+                child: LinearProgressIndicator(value: _progress / 100),
+                
+            ),
           ],
         ),
       ),
