@@ -24,6 +24,7 @@ class _WebviewScreen extends State<WebviewScreen> {
   bool isLoading = false; //esta variable indica si la página web está cargando o no.
   int _progress = 0; //contador para barra de progreso
   String? _errorMessage;
+  bool _hasMainFrameError = false;
 
 
   @override
@@ -41,11 +42,16 @@ class _WebviewScreen extends State<WebviewScreen> {
                 setState(() {
                   _errorMessage = null;
                   isLoading = true;
+                  _hasMainFrameError = false;
                 });
               },
               onPageFinished: (url) {
                 setState(() {
                   isLoading = false;
+                  _progress = 100;
+                  if (!_hasMainFrameError) {
+                    _errorMessage = null;
+                  }
                 });
               },
               onProgress: (value) {
@@ -54,10 +60,13 @@ class _WebviewScreen extends State<WebviewScreen> {
                 });
               },
               onWebResourceError: (error) {
+                if (!( error.isForMainFrame ?? false))
+                  return;
                 setState(() {
                   _progress = 0;
                   isLoading = false;
-                  _errorMessage = error.description; //se guarda en la variable errormessage el mensaje del error en cuestion
+                  _errorMessage = error.description;//se guarda en la variable error message el mensaje del error en cuestion
+                  _hasMainFrameError = true;
                 });
                 debugPrint("Error al cargar la página: ${error.description}");
               },
@@ -121,7 +130,7 @@ class _WebviewScreen extends State<WebviewScreen> {
             WebViewWidget(controller: _controller),
 
 
-            if(_errorMessage != null) // mostrar mensaje de error en caso de problema con conexion
+            if(_errorMessage != null || _hasMainFrameError == true) // mostrar mensaje de error en caso de problema con conexion
               Center(
                 child: Column(
                   mainAxisAlignment:  MainAxisAlignment.center,
@@ -138,8 +147,12 @@ class _WebviewScreen extends State<WebviewScreen> {
                       onPressed: () {
                         setState(() {
                           _errorMessage = null;
-                          _controller.reload();
+                          _hasMainFrameError = false;
+                          isLoading = true;
+                          _progress = 0;
+                          
                         });
+                        _controller.reload();
                       }, 
                       child: const Text('Reintentar'),
                       ),
