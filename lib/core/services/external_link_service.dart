@@ -1,6 +1,6 @@
 // lib/core/services/external_link_service.dart
-import 'dart:io';
 import 'package:url_launcher/url_launcher.dart';
+
 
 class ExternalLinkService {
   /// Abre un enlace fuera de tu app, intentando la app nativa cuando aplica.
