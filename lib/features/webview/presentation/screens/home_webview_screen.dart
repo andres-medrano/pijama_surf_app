@@ -2,179 +2,277 @@ import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:pijama_surf_app/core/utils/constants.dart';
 import 'package:pijama_surf_app/core/services/external_link_service.dart';
-import 'package:pijama_surf_app/features/webview/presentation/widgets/external_link_dialog.dart';
+// Si tienes un diálogo de confirmación propio, descomenta el import de abajo
 
-//Única pantalla del MVP.
-
-//Orquesta la WebView y la UI básica (AppBar, loading, banner offline).
-
-//Punto de entrada de navegación (no hay más rutas en el MVP).
-
+/// Única pantalla del MVP.
+/// Orquesta la WebView y la UI básica (AppBar, loading, progreso superior, manejo de enlaces externos).
 class WebviewScreen extends StatefulWidget {
   const WebviewScreen({super.key});
 
   @override
-  State<WebviewScreen> createState() {
-    return _WebviewScreen();
-  }
+  State<WebviewScreen> createState() => _WebviewScreen();
 }
 
 class _WebviewScreen extends State<WebviewScreen> {
   late final WebViewController _controller;
-  bool isLoading = false; //esta variable indica si la página web está cargando o no.
-  int _progress = 0; //contador para barra de progreso
-  String? _errorMessage;
-  bool _hasMainFrameError = false;
 
+  // --- Estados de carga/progreso ---
+  bool isLoading = false;
+  int _progress = 0;
+
+  // --- Estados de navegación (historial) para habilitar/deshabilitar botones ---
+  bool _canGoBack = false;
+  bool _canGoForward = false;
+
+  /// Helper que consulta al WebView si puede ir atrás/adelante y actualiza la UI.
+  Future<void> _updateNavigationState() async {
+    try {
+      final back = await _controller.canGoBack();
+      final fwd = await _controller.canGoForward();
+      if (!mounted) return;
+      setState(() {
+        _canGoBack = back;
+        _canGoForward = fwd;
+      });
+    } catch (_) {
+      // Silenciar errores transitorios durante cambios rápidos de página.
+    }
+  }
 
   @override
   void initState() {
-    // se usa unit state porque se necesita que el controlador de webview sea creadon y haga la peticion https antes de renderizar
     super.initState();
-    _controller =
-        WebViewController() // controlador principal del webview
-          ..setJavaScriptMode(
-            JavaScriptMode.unrestricted,
-          ) // permite que flutter use javascript para mostrar y actualizar conteido de web PS
-          ..setNavigationDelegate(
-            NavigationDelegate(
-              onPageStarted: (url) {
-                setState(() {
-                  _errorMessage = null;
-                  isLoading = true;
-                  _hasMainFrameError = false;
-                });
-              },
-              onPageFinished: (url) {
-                setState(() {
-                  isLoading = false;
-                  _progress = 100;
-                  if (!_hasMainFrameError) {
-                    _errorMessage = null;
+
+    _controller = WebViewController()
+      ..addJavaScriptChannel(
+        'PSExternal', // nombre del canal JS
+        onMessageReceived: (JavaScriptMessage msg) async {
+          final url = msg.message;
+          // Abre SIEMPRE fuera con tu servicio (intent, youtube, http externo, etc.)
+          final uri = Uri.tryParse(url);
+          if (uri != null) {
+            await ExternalLinkService.openExternalLink(uri);
+          }
+        },
+      )
+      // Importante para que Pijama Surf renderice correctamente (usa bastante JS).
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setNavigationDelegate(
+        NavigationDelegate(
+          // Actualiza el progreso [0..100] para la barra superior.
+          onProgress: (value) => setState(() => _progress = value),
+
+          // Comienza carga: activa overlay + (opcional) limpia flags de error.
+          onPageStarted: (url) {
+            setState(() {
+              isLoading = true;
+            });
+            _updateNavigationState();
+          },
+
+          // Finaliza carga: apaga overlay, fija progreso a 100 e inyecta JS.
+          onPageFinished: (url) async {
+            setState(() {
+              isLoading = false;
+              _progress = 100;
+            });
+            _updateNavigationState();
+
+            // --- INYECCIÓN JS PARA MANEJAR target=_blank y window.open ---
+            const jsInjection = r"""
+              (function() {
+                try {
+                  if (window.__ps_injected__) return;
+                  window.__ps_injected__ = true;
+
+                  // Hook a window.open
+                  (function() {
+                    const originalOpen = window.open;
+                    window.open = function(url, name, specs) {
+                      if (url) {
+                        try { PSExternal.postMessage(url.toString()); } catch(e) {}
+                        return null;
+                      }
+                      return originalOpen && originalOpen.apply(window, arguments);
+                    };
+                  })();
+
+                  function handleAnchorClick(e) {
+                    const a = e.currentTarget;
+                    if (!a) return;
+                    var href = a.getAttribute('href');
+                    if (!href) return;
+                    try { href = new URL(href, window.location.href).toString(); } catch (err) {}
+                    try {
+                      PSExternal.postMessage(href);
+                      e.preventDefault();
+                      e.stopPropagation();
+                      return false;
+                    } catch (err) {}
                   }
-                });
-              },
-              onProgress: (value) {
-                setState(() {
-                  _progress = value;
-                });
-              },
-              onWebResourceError: (error) {
-                if (!( error.isForMainFrame ?? false))
-                  return;
-                setState(() {
-                  _progress = 0;
-                  isLoading = false;
-                  _errorMessage = error.description;//se guarda en la variable error message el mensaje del error en cuestion
-                  _hasMainFrameError = true;
-                });
-                debugPrint("Error al cargar la página: ${error.description}");
-              },
-              // Forzar https cuando el enlace venga en http (solo dominios permitidos)
-              onNavigationRequest: (request) async {
-                final uri = Uri.parse(request.url);
-                final host = uri.host.toLowerCase();
-                final isHttp = uri.scheme == 'http';
 
-                final isAllowedHost =
-                    allowedHosts.contains(host) ||
-                    host.endsWith('.pijamasurf.com');
+                  function patchAnchors(root) {
+                    const anchors = (root || document).querySelectorAll('a[target="_blank"], a[rel*="external"], a[data-external="true"]');
+                    for (let i = 0; i < anchors.length; i++) {
+                      const a = anchors[i];
+                      if (!a.__ps_click_bound__) {
+                        a.addEventListener('click', handleAnchorClick, true);
+                        a.__ps_click_bound__ = true;
+                      }
+                    }
+                  }
 
-                if (isHttp && isAllowedHost) {
-                  final httpsUri = uri.replace(scheme: 'https');
-                  _controller.loadRequest(httpsUri); // cargar versión segura
-                  return NavigationDecision.prevent; // bloquear la http original
-                }
-                else if(allowedHosts.contains(host)) { //verifica si la url a abrir es interna y la abre
-                  return NavigationDecision.navigate;
-                } else {
-                //en caso de que la url sea externa, se hace un llamado a la funcion externallinkservice para abrir enlace externo
-                
-                final confirm = await showExternalLinkDialog(context, uri); // instancia de la funcion showexternallinkdialog
+                  patchAnchors(document);
 
-                if (confirm) { 
-                  final externalLinkService = ExternalLinkService();
-                  await externalLinkService.openExternalLink(uri);
-                  debugPrint('Enlace externo: $uri');
+                  const observer = new MutationObserver(function(mutations) {
+                    for (let i = 0; i < mutations.length; i++) {
+                      const m = mutations[i];
+                      if (m.addedNodes && m.addedNodes.length > 0) {
+                        for (let j = 0; j < m.addedNodes.length; j++) {
+                          const node = m.addedNodes[j];
+                          if (node.nodeType === 1) {
+                            patchAnchors(node);
+                          }
+                        }
+                      }
+                    }
+                  });
+                  observer.observe(document.documentElement, { childList: true, subtree: true });
+                } catch (e) {
+                  // Silenciar para no romper la página
                 }
-                
-                return NavigationDecision.prevent;
-                }
-                
-              },
-            ),
-          )..loadRequest(Uri.parse(baseUrl)); // carga la pagina principal de pijama surf en el webview
+              })();
+            """;
+
+            try {
+              await _controller.runJavaScript(jsInjection);
+            } catch (e) {
+              debugPrint('[WebView] JS injection failed: $e');
+            }
+          },
+
+          // Errores de recursos/página: apagamos overlay y progreso.
+          onWebResourceError: (error) {
+            setState(() {
+              isLoading = false;
+              _progress = 0;
+            });
+            _updateNavigationState();
+          },
+
+          // Intercepta TODA navegación iniciada por el usuario o por la página
+          // para: (1) forzar https en dominios permitidos,
+          //       (2) abrir fuera todo lo no permitido o no http/https (intent, vnd.youtube, etc.).
+          onNavigationRequest: (request) async {
+            final uri = Uri.parse(request.url);
+            final scheme = uri.scheme.toLowerCase();
+            final host = uri.host.toLowerCase();
+
+            // ¿Es un host que permitimos dentro del WebView?
+            final isAllowedHost =
+                allowedHosts.contains(host) || host.endsWith('.pijamasurf.com');
+
+            // (1) Si es http en un host permitido → forzar a https para evitar net::ERR_CLEARTEXT_NOT_PERMITTED
+            if (scheme == 'http' && isAllowedHost) {
+              final httpsUri = uri.replace(scheme: 'https');
+              await _controller.loadRequest(httpsUri);
+              return NavigationDecision.prevent;
+            }
+
+            // (2) Si NO es http/https (ej: intent://, vnd.youtube://) → abrir fuera
+            if (scheme != 'http' && scheme != 'https') {
+              // (Opcional) Diálogo de confirmación:
+              // final confirm = await showExternalLinkDialog(context, uri);
+              // if (!confirm) return NavigationDecision.prevent;
+
+              await ExternalLinkService.openExternalLink(uri);
+              return NavigationDecision.prevent;
+            }
+
+            // (3) Si es http/https PERO el host NO es permitido → abrir fuera
+            if (!isAllowedHost) {
+              // (Opcional) Diálogo de confirmación:
+              // final confirm = await showExternalLinkDialog(context, uri);
+              // if (!confirm) return NavigationDecision.prevent;
+
+              await ExternalLinkService.openExternalLink(uri);
+              return NavigationDecision.prevent;
+            }
+
+            // (4) Si pasa todas las validaciones → permitir navegación interna
+            return NavigationDecision.navigate;
+          },
+        ),
+      )
+      // URL base de Pijama Surf (definida en constants.dart)
+      ..loadRequest(Uri.parse(baseUrl));
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Pijama Surf'), 
-      actions: [
-        IconButton(
-          onPressed: () {
-            _controller.reload();
-          } , 
-          icon: 
-          const Icon(
-            Icons.refresh,
+      // AppBar con navegación tipo navegador: Atrás/Adelante/Recargar
+      appBar: AppBar(
+        title: const Text('Pijama Surf'),
+        // Botón "Atrás" a la izquierda
+        leading: IconButton(
+          tooltip: 'Atrás',
+          icon: const Icon(Icons.arrow_back),
+          onPressed: _canGoBack
+              ? () async {
+                  await _controller.goBack();
+                }
+              : null,
+        ),
+        actions: [
+          // Botón "Adelante"
+          IconButton(
+            tooltip: 'Adelante',
+            icon: const Icon(Icons.arrow_forward),
+            onPressed: _canGoForward
+                ? () async {
+                    await _controller.goForward();
+                  }
+                : null,
           ),
-          tooltip: 'Recargar',
-        )
-      ],
-    ),
+          // Botón "Recargar" (se deshabilita mientras carga)
+          IconButton(
+            tooltip: 'Recargar',
+            icon: const Icon(Icons.refresh),
+            onPressed: isLoading
+                ? null
+                : () async {
+                    setState(() {
+                      _progress = 0; // feedback inmediato (opcional)
+                      isLoading = true;
+                    });
+                    await _controller.reload();
+                  },
+          ),
+        ],
+      ),
+
+      // Capa principal: WebView + progreso + overlay de carga
       body: SafeArea(
         child: Stack(
           children: [
-            
+            // Contenido web
             WebViewWidget(controller: _controller),
 
-
-            if(_errorMessage != null || _hasMainFrameError == true) // mostrar mensaje de error en caso de problema con conexion
-              Center(
-                child: Column(
-                  mainAxisAlignment:  MainAxisAlignment.center,
-                  children: [
-                    const Icon(Icons.wifi_off, size: 48, color: Color.fromARGB(255, 6, 4, 4),),
-                    const SizedBox(height: 12),
-                    Text(
-                      'No se pudo cargar la pagina.\n${_errorMessage!}',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: const Color.fromARGB(255, 6, 4, 4)),
-                      ),
-                    const SizedBox(height: 16),
-                    ElevatedButton(
-                      onPressed: () {
-                        setState(() {
-                          _errorMessage = null;
-                          _hasMainFrameError = false;
-                          isLoading = true;
-                          _progress = 0;
-                          
-                        });
-                        _controller.reload();
-                      }, 
-                      child: const Text('Reintentar'),
-                      ),
-                  ]
-                  
-                ),
+            // Barra de progreso superior (solo visible entre 1% y 99%)
+            if (_progress > 0 && _progress < 100)
+              Align(
+                alignment: Alignment.topCenter,
+                child: LinearProgressIndicator(value: _progress / 100),
               ),
 
-            if (isLoading) //segunda capa del stack, se viasualiza encima del webviewwidget, condicional para mostrae el circularprogressindicator, dependiendo si la pagina esta o no cargando
+            // Overlay de carga
+            if (isLoading)
               Container(
                 color: Colors.black26,
                 alignment: Alignment.center,
-                child: Center(child: CircularProgressIndicator(),
-                ),
+                child: const CircularProgressIndicator(),
               ),
-
-            if(_progress > 0  &&  _progress < 100) // barra de progreso al cargar una pagina internamente
-               Align(
-                alignment: Alignment.topCenter,
-                child: LinearProgressIndicator(value: _progress / 100),
-                
-            ),
           ],
         ),
       ),
