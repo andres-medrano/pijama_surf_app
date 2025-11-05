@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:pijama_surf_app/core/utils/constants.dart';
 import 'package:pijama_surf_app/core/services/external_link_service.dart';
-// Si tienes un diálogo de confirmación propio, descomenta el import de abajo
+// Si tienes un diálogo de confirmación propio, descomenta el import de aba
 
 /// Única pantalla del MVP.
 /// Orquesta la WebView y la UI básica (AppBar, loading, progreso superior, manejo de enlaces externos).
@@ -38,6 +38,7 @@ class _WebviewScreen extends State<WebviewScreen> {
       // Silenciar errores transitorios durante cambios rápidos de página.
     }
   }
+
 
   @override
   void initState() {
@@ -210,70 +211,85 @@ class _WebviewScreen extends State<WebviewScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      // AppBar con navegación tipo navegador: Atrás/Adelante/Recargar
-      appBar: AppBar(
-        title: const Text('Pijama Surf'),
-        // Botón "Atrás" a la izquierda
-        leading: IconButton(
-          tooltip: 'Atrás',
-          icon: const Icon(Icons.arrow_back),
-          onPressed: _canGoBack
-              ? () async {
-                  await _controller.goBack();
-                }
-              : null,
-        ),
-        actions: [
-          // Botón "Adelante"
-          IconButton(
-            tooltip: 'Adelante',
-            icon: const Icon(Icons.arrow_forward),
-            onPressed: _canGoForward
+    return PopScope (
+      // maneja el boton atras de los dispositivos android. cuando no hay historial para regresar, el boton atras cierra la app
+      canPop: !_canGoBack,
+      onPopInvokedWithResult: (bool didPop, Object ? result) async { 
+        if(didPop) {
+          return ;
+        } else {
+          if( didPop == false && await _controller.canGoBack()) {
+             await _controller.goBack();
+            
+          }
+          
+        }
+      } ,
+      child: Scaffold(
+        // AppBar con navegación tipo navegador: Atrás/Adelante/Recargar
+        appBar: AppBar(
+          title: const Text('Pijama Surf'),
+          // Botón "Atrás" a la izquierda
+          leading: IconButton(
+            tooltip: 'Atrás',
+            icon: const Icon(Icons.arrow_back),
+            onPressed: _canGoBack
                 ? () async {
-                    await _controller.goForward();
+                    await _controller.goBack();
                   }
                 : null,
           ),
-          // Botón "Recargar" (se deshabilita mientras carga)
-          IconButton(
-            tooltip: 'Recargar',
-            icon: const Icon(Icons.refresh),
-            onPressed: isLoading
-                ? null
-                : () async {
-                    setState(() {
-                      _progress = 0; // feedback inmediato (opcional)
-                      isLoading = true;
-                    });
-                    await _controller.reload();
-                  },
-          ),
-        ],
-      ),
-
-      // Capa principal: WebView + progreso + overlay de carga
-      body: SafeArea(
-        child: Stack(
-          children: [
-            // Contenido web
-            WebViewWidget(controller: _controller),
-
-            // Barra de progreso superior (solo visible entre 1% y 99%)
-            if (_progress > 0 && _progress < 100)
-              Align(
-                alignment: Alignment.topCenter,
-                child: LinearProgressIndicator(value: _progress / 100),
-              ),
-
-            // Overlay de carga
-            if (isLoading)
-              Container(
-                color: Colors.black26,
-                alignment: Alignment.center,
-                child: const CircularProgressIndicator(),
-              ),
+          actions: [
+            // Botón "Adelante"
+            IconButton(
+              tooltip: 'Adelante',
+              icon: const Icon(Icons.arrow_forward),
+              onPressed: _canGoForward
+                  ? () async {
+                      await _controller.goForward();
+                    }
+                  : null,
+            ),
+            // Botón "Recargar" (se deshabilita mientras carga)
+            IconButton(
+              tooltip: 'Recargar',
+              icon: const Icon(Icons.refresh),
+              onPressed: isLoading
+                  ? null
+                  : () async {
+                      setState(() {
+                        _progress = 0; // feedback inmediato (opcional)
+                        isLoading = true;
+                      });
+                      await _controller.reload();
+                    },
+            ),
           ],
+        ),
+      
+        // Capa principal: WebView + progreso + overlay de carga
+        body: SafeArea(
+          child: Stack(
+            children: [
+              // Contenido web
+              WebViewWidget(controller: _controller),
+      
+              // Barra de progreso superior (solo visible entre 1% y 99%)
+              if (_progress > 0 && _progress < 100)
+                Align(
+                  alignment: Alignment.topCenter,
+                  child: LinearProgressIndicator(value: _progress / 100),
+                ),
+      
+              // Overlay de carga
+              if (isLoading)
+                Container(
+                  color: Colors.black26,
+                  alignment: Alignment.center,
+                  child: const CircularProgressIndicator(),
+                ),
+            ],
+          ),
         ),
       ),
     );
