@@ -6,12 +6,12 @@ class AppTheme {
   // Paleta clara (Pijama Surf)
   static const Color primary = Color(0xFF0077B6);
   static const Color primaryVariant = Color(0xFF0096C7);
-  static const Color textDark = Color(0xFF222222);
+  static const Color textDark = Color(0xFF1A1A1A);
   static const Color bg = Colors.white;
   static const Color bgMuted = Color(0xFFF5F5F5);
 
   // Paleta oscura (equivalentes)
-  static const Color darkBg = Color(0xFF0E0F10);       // fondo base
+  static const Color darkBg = Color(0xFF1A1A1A);       // fondo base
   static const Color darkSurface = Color(0xFF151618);  // cards/appbar
   static const Color darkText = Color(0xFFEFEFEF);     // texto principal
 
@@ -21,10 +21,11 @@ class AppTheme {
     final textTheme = GoogleFonts.latoTextTheme(base.textTheme).apply(
       bodyColor: textDark,
       displayColor: textDark,
+      
     );
 
     return base.copyWith(
-      scaffoldBackgroundColor: bg,
+      scaffoldBackgroundColor: Colors.white,
       textTheme: textTheme,
       colorScheme: base.colorScheme.copyWith(
         brightness: Brightness.light,
@@ -35,7 +36,8 @@ class AppTheme {
       ),
       appBarTheme: AppBarTheme(
         backgroundColor: bg,
-        elevation: 0,
+        foregroundColor: textDark,
+        elevation: 0.5,
         centerTitle: true,
         titleTextStyle: textTheme.titleMedium?.copyWith(
           fontWeight: FontWeight.w700,

@@ -230,7 +230,8 @@ class _WebviewScreen extends State<WebviewScreen> {
         appBar: AppBar(
           title: const Text('Pijama Surf'),
           // Botón "Atrás" a la izquierda
-          leading: IconButton(
+          leading: 
+          IconButton(
             tooltip: 'Atrás',
             icon: const Icon(Icons.arrow_back),
             onPressed: _canGoBack
