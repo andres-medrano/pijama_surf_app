@@ -52,6 +52,7 @@ class _WebviewScreen extends State<WebviewScreen> {
           // Abre SIEMPRE fuera con tu servicio (intent, youtube, http externo, etc.)
           final uri = Uri.tryParse(url);
           if (uri != null) {
+            debugPrint('[PSExternal] Mensaje JS → $url');
             await ExternalLinkService.openExternalLink(uri);
           }
         },
@@ -80,70 +81,118 @@ class _WebviewScreen extends State<WebviewScreen> {
             _updateNavigationState();
 
             // --- INYECCIÓN JS PARA MANEJAR target=_blank y window.open ---
-            const jsInjection = r"""
-              (function() {
-                try {
-                  if (window.__ps_injected__) return;
-                  window.__ps_injected__ = true;
+            const jsInjection =  r"""
+(function() {
+  try {
+    if (window.__ps_injected__) return;
+    window.__ps_injected__ = true;
 
-                  // Hook a window.open
-                  (function() {
-                    const originalOpen = window.open;
-                    window.open = function(url, name, specs) {
-                      if (url) {
-                        try { PSExternal.postMessage(url.toString()); } catch(e) {}
-                        return null;
-                      }
-                      return originalOpen && originalOpen.apply(window, arguments);
-                    };
-                  })();
+    // --- Función para saber si una URL es interna (mismo host que Pijama Surf) ---
+    function isInternal(href) {
+      try {
+        var u = new URL(href, window.location.href);
+        return u.host === window.location.host;
+      } catch (e) {
+        return false;
+      }
+    }
 
-                  function handleAnchorClick(e) {
-                    const a = e.currentTarget;
-                    if (!a) return;
-                    var href = a.getAttribute('href');
-                    if (!href) return;
-                    try { href = new URL(href, window.location.href).toString(); } catch (err) {}
-                    try {
-                      PSExternal.postMessage(href);
-                      e.preventDefault();
-                      e.stopPropagation();
-                      return false;
-                    } catch (err) {}
-                  }
+    // --- Manejar clicks en <a target="_blank"> y similares ---
+    function handleAnchorClick(e) {
+      var a = e.currentTarget;
+      if (!a) return;
 
-                  function patchAnchors(root) {
-                    const anchors = (root || document).querySelectorAll('a[target="_blank"], a[rel*="external"], a[data-external="true"]');
-                    for (let i = 0; i < anchors.length; i++) {
-                      const a = anchors[i];
-                      if (!a.__ps_click_bound__) {
-                        a.addEventListener('click', handleAnchorClick, true);
-                        a.__ps_click_bound__ = true;
-                      }
-                    }
-                  }
+      var href = a.getAttribute('href');
+      if (!href) return;
 
-                  patchAnchors(document);
+      var absHref;
+      try {
+        absHref = new URL(href, window.location.href).toString();
+      } catch (err) {
+        absHref = href;
+      }
 
-                  const observer = new MutationObserver(function(mutations) {
-                    for (let i = 0; i < mutations.length; i++) {
-                      const m = mutations[i];
-                      if (m.addedNodes && m.addedNodes.length > 0) {
-                        for (let j = 0; j < m.addedNodes.length; j++) {
-                          const node = m.addedNodes[j];
-                          if (node.nodeType === 1) {
-                            patchAnchors(node);
-                          }
-                        }
-                      }
-                    }
-                  });
-                  observer.observe(document.documentElement, { childList: true, subtree: true });
-                } catch (e) {
-                  // Silenciar para no romper la página
-                }
-              })();
-            """;
+      if (isInternal(absHref)) {
+        // Enlace interno: dejar que el WebView navegue dentro.
+        // Forzamos target=_self por si la página insiste en abrir nueva pestaña.
+        a.setAttribute('target', '_self');
+        return; // no prevenimos el comportamiento por defecto
+      } else {
+        // Enlace externo: lo mandamos a Flutter para que lo abra fuera
+        e.preventDefault();
+        e.stopPropagation();
+        try {
+          PSExternal.postMessage(absHref);
+        } catch (err) {
+          // no romper la página si algo falla
+        }
+      }
+    }
+
+    // --- Enganchar a todos los <a target="_blank">, rel=external, etc. ---
+    function patchAnchors(root) {
+      var anchors = (root || document).querySelectorAll(
+        'a[target="_blank"], a[rel*="external"], a[data-external="true"]'
+      );
+      for (var i = 0; i < anchors.length; i++) {
+        var a = anchors[i];
+        if (a.__ps_click_bound__) continue;
+        a.addEventListener('click', handleAnchorClick, true);
+        a.__ps_click_bound__ = true;
+      }
+    }
+
+    // Parche inicial
+    patchAnchors(document);
+
+    // Observar cambios dinámicos en el DOM (contenido que se carga más tarde)
+    var observer = new MutationObserver(function(mutations) {
+      for (var i = 0; i < mutations.length; i++) {
+        var m = mutations[i];
+        if (!m.addedNodes) continue;
+        for (var j = 0; j < m.addedNodes.length; j++) {
+          var node = m.addedNodes[j];
+          if (node.nodeType === 1) {
+            patchAnchors(node);
+          }
+        }
+      }
+    });
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+
+    // --- Sobrescribir window.open para decidir interno vs externo ---
+    var originalOpen = window.open;
+    window.open = function(url, name, specs) {
+      if (!url) return null;
+      try {
+        // Normalizamos la URL
+        var abs = new URL(url, window.location.href).toString();
+
+        if (isInternal(abs)) {
+          // Enlace interno: navegar dentro del mismo WebView
+          window.location.href = abs;
+          return null;
+        } else {
+          // Enlace externo: mandar a Flutter para que lo abra fuera
+          PSExternal.postMessage(abs);
+          return null;
+        }
+      } catch (e) {
+        // Si algo falla, intentamos el window.open original como fallback
+        try {
+          return originalOpen ? originalOpen(url, name, specs) : null;
+        } catch (_) {
+          return null;
+        }
+      }
+    };
+
+  } catch (e) {
+    // Silenciar errores para no romper la página
+  }
+})();
+""";
+
 
             try {
               await _controller.runJavaScript(jsInjection);
